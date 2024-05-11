@@ -13,7 +13,12 @@ class LogisticRegression:
 
     def fit(self, X, y):
         if len(set(y)) != 2:
-            raise RuntimeError("This Linear Regression model can only do binary classification")
+            raise RuntimeError("This Logistic Regression model can only do binary classification")
+
+        self.positive_label = list(set(y))[0]
+        self.negative_label = list(set(y))[1]
+
+
 
     def add_intercept(self, feature_matrix):
         # Add 1 to every feature vector
@@ -82,3 +87,4 @@ class LogisticRegressionMulticlass(LogisticRegression):
     pass
 
 if __name__ == '__main__':
+    pass
