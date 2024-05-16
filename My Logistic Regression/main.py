@@ -1,5 +1,10 @@
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
+def sigmoid(number):
+    return 1 / (1 + np.exp(-number))
+
 
 def cross_entropy_generator(X, y):
     def cross_entropy(input_w: np.array):
@@ -12,10 +17,32 @@ def cross_entropy_generator(X, y):
         result /= num_of_observations
         return result
 
+    #def cross_entropy_gradient(input_w: np.array):
+        #num_of_observations = X.shape[0]
+        #gradient = np.zeros(X.shape[1])
+
+        #for i in range(num_of_observations):
+            #dot_product = np.dot(input_w, X[i])
+            #gradient += y[i] * X[i] * sigmoid(y[i] * dot_product)
+
+        #return gradient / num_of_observations
+
     def cross_entropy_gradient(input_w: np.array):
-        pass
+        # Compute the dot product <w, xi> for all xi in X
+        dot_products = np.dot(X, input_w)
+        # Compute yi * <w, xi> for all i
+        y_dot_products = y * dot_products
+        # Compute sigmoid(yi * <w, xi>) for all i
+        sigmoid_values = sigmoid(y_dot_products)
+        # Computes the product yi * xi * sigmoid(yi * <w, xi>) for each i
+        # results in a matrix where each row is a vector contributing to the gradient from each sample.
+        gradient_contributions = y[:, np.newaxis] * X * sigmoid_values[:, np.newaxis]
+        gradient = np.sum(gradient_contributions, axis=0) / X.shape[0]
+
+        return gradient
 
     return cross_entropy, cross_entropy_gradient
+
 
 class LogisticRegression:
 
@@ -33,13 +60,13 @@ class LogisticRegression:
         self.num_of_observations = 0
         self.fit_intercept = fit_intercept
         self.threshold_for_pos_classification = threshold_for_pos_classification
-        self.gradient_descent_learning_rate = 0.001
+        self.gradient_descent_learning_rate = 500
         self.loss_func = None
         self.loss_func_gradient = None
 
     def set_fit_params(self, X, y):
-        self.positive_label = list(set(y))[0]
-        self.negative_label = list(set(y))[1]
+        if self.fit_intercept:
+            X = self.add_intercept(X)
         self.num_of_observations = X.shape[0]
         # Save the data as numpy matrix in order to make calculations
         self.X_train_np = np.array(X)
@@ -47,22 +74,30 @@ class LogisticRegression:
         # Save the data as DataFrame in order to keep the columns names if given
         self.X_train_df = pd.DataFrame(X)
         self.y_train_df = pd.Series(y)
-        self.loss_func, self.loss_func_gradient = cross_entropy_generator(X, y)
+        self.loss_func, self.loss_func_gradient = cross_entropy_generator(self.X_train_np, self.y_train_np)
 
     def fit(self, X, y):
         self.set_fit_params(X, y)
-        if self.fit_intercept:
-            self.X_train_np = self.add_intercept(self.X_train_np)
-        self._weights = np.zeros(len(self.X_train_np[0])) # init all the weights to 0
+        self._weights = np.zeros(self.X_train_np.shape[1]) # init all the weights to 0
 
         self.gradient_descent()
 
         self.fit_completed = True
 
-    def gradient_descent(self, zero_threshold = 0.0001):
+    def gradient_descent(self, zero_threshold=0.0000001):
+        num_of_itrs = 0
+        while self.is_loss_function_reached_local_min(zero_threshold) == False:
+            self._weights = self._weights - self.gradient_descent_learning_rate * self.loss_func_gradient(self._weights)
+            num_of_itrs += 1
+
+        num_of_itrs = num_of_itrs
+
+    def is_loss_function_reached_local_min(self, zero_threshold=0.0000001):
+        # A function reached local minimum if it's gradient is 0
+        gradient_of_weights = self.loss_func_gradient(self._weights)
+        gradient_of_weights_norm = np.linalg.norm(gradient_of_weights)
         # A vector v is the 0 vector if and only if ||v|| = 0
-        while np.linalg.norm(self.loss_func_gradient(self._weights)) > zero_threshold:
-            self._weights = self._weights - self.gradient_descent_learning_rate * self.loss_func(self._weights)
+        return gradient_of_weights_norm <= zero_threshold
 
     def cross_entropy(self, X, y):
         result = 0
@@ -90,7 +125,9 @@ class LogisticRegression:
             return feature_matrix  # Returning the modified DataFrame
 
     def predict_label(self, feature_vector):
-        sigmoid_res = self.sigmoid(feature_vector)
+        feature_vector = np.array(feature_vector)
+        z = np.inner(feature_vector, self._weights)
+        sigmoid_res = sigmoid(z)
         if sigmoid_res >= self.threshold_for_pos_classification:
             return self.positive_label
         else:
@@ -139,31 +176,26 @@ class LogisticRegression:
             predictions = np.array(self.predict(X))
             true_labels = np.array(y)
             num_of_correct_classifications = np.sum(predictions == true_labels)
-            return len(y) / num_of_correct_classifications
+            return num_of_correct_classifications / len(y)
 
         else:
             raise RuntimeError("Model has not been fitted yet. Please call fit() first.")
 
     def summary(self, X_test = None, y_test = None):
-        self.X_train = pd.DataFrame(self.X_train)
-        self.y_train = pd.Series(self.y_train)
         X_test = pd.DataFrame(X_test)
         y_test = pd.Series(y_test)
 
         summary_str = "==============================================================================\n"
-        summary_str += f"Dep. Variable:                {self.y_train.name}\n"
-        summary_str += "Loss Function:                MSE\n"
+        summary_str += f"Dep. Variable:                {self.y_train_df.name}\n"
+        summary_str += "Loss Function:                Cross Entropy\n"
 
         if X_test is not None and y_test is not None:
-            r_squared = self.score(X_test, y_test)
-            adj_r_squared = self.adjusted_score(X_test, y_test)
+            score= self.score(X_test, y_test)
         else:
-            r_squared = self.score(self.X_train, self.y_train)
-            adj_r_squared = self.adjusted_score(self.X_train, self.y_train)
+            r_squared = self.score(self.X_train_df, self.y_train_df)
 
-        summary_str += f"R-squared:                    {r_squared:.6f}\n"
-        summary_str += f"Adj. R-squared:               {adj_r_squared:.6f}\n"
-        summary_str += f"No. Observations for train:   {len(self.X_train)}\n"
+        summary_str += f"Score:                    {score:.6f}\n"
+        summary_str += f"No. Observations for train:   {self.num_of_observations}\n"
 
         if X_test is not None and y_test is not None:
             summary_str += f"No. Observations for test:    {len(X_test)}\n"
@@ -172,7 +204,7 @@ class LogisticRegression:
         summary_str += "Weights Found After Training: \n"
         summary_str += "{:<15} {:>10}\n".format(" ", "coef")
 
-        X_column_names = self.X_train.columns.tolist()
+        X_column_names = self.X_train_df.columns.tolist()
         for i in range(len(self._weights)):
             summary_str += "{:<15} {:10.6f}\n".format(
                 X_column_names[i] if i < len(X_column_names) else "const",
@@ -191,14 +223,20 @@ def your_function(row_X, number_y):
     print("Row:", row_X, "Number:", number_y)
 
 if __name__ == '__main__':
-    #import statsmodels.api as sm
+    import statsmodels.api as sm
     df = pd.read_csv("students-loan-data.csv")
-    #X = sm.add_constant(df[["balance", "income", "student"]])
-    #y = df["valid"]
+    scaler = StandardScaler()
+    # Fit and transform the data
+    normalized_df = pd.DataFrame(scaler.fit_transform(df), columns=df.columns)
+    X = normalized_df[["balance", "income", "student"]]
+    y = df["valid"]
 
-    #model = sm.Logit(y, X)
-    #res = model.fit()
+    model = LogisticRegression(threshold_for_pos_classification=0.1)
+    model.fit(X, y)
+    X2 = normalized_df[["balance", "income", "student"]]
+    print(model.score(X2, y))
 
-    #print(res.summary())
+
+
 
 
