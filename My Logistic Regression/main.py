@@ -5,8 +5,6 @@ from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 import re
 from collections import Counter  # Used to count the number of time a word appears in text
-from nltk.stem import WordNetLemmatizer  # Used to remove all the verb endings from words
-from nltk.tokenize import word_tokenize
 from sklearn.decomposition import PCA
 
 
@@ -46,7 +44,7 @@ def cross_entropy_generator(X, y):
 
 class LogisticRegression:
 
-    def __init__(self, fit_intercept=True, threshold_for_pos_classification=0.5, max_iter=100_000):
+    def __init__(self, fit_intercept=True, threshold_for_pos_classification=0.5, max_iter=10_000):
         self._weights = None
         self.__fit_completed = False
         self.__positive_label = 1
@@ -60,7 +58,20 @@ class LogisticRegression:
         self.__num_of_observations = 0
         self.__fit_intercept = fit_intercept
         self.__threshold_for_pos_classification = threshold_for_pos_classification
-        self.__gradient_descent_learning_rate = 0.00001
+        # 0.00001 = 0.5637, threshold = 1
+        # 0.1 = 0.6669, threshold = 1
+        # 0.1 = 0.6813, threshold = 1
+        # 0.001 = 0.695, threshold = 1
+        # 0.0001 = 0.7, threshold = 1
+
+        # 0.0001 = 0.6, threshold = 0.8
+        # 0.00001 = 0.686, threshold = 0.8
+        # 0.000001 = 0.709, threshold = 0.8, zero_threshold=0.0000001
+        # 0.0000001 = 0.71, threshold = 0.8, zero_threshold= 0.0000001
+        # 0.00000001 = 0.71, threshold = 0.8, zero_threshold= 0.0000001
+        # 0.000000001 = 0.71, threshold = 0.8, zero_threshold= 0.0000001
+        # 0.0000000001 = 0.71, threshold = 0.8, zero_threshold= 0.0000001
+        self.__gradient_descent_learning_rate = 0.00000001
         self.__max_iter = max_iter
         self.__loss_func = None
         self.__loss_func_gradient = None
@@ -96,7 +107,7 @@ class LogisticRegression:
 
         num_of_itrs = num_of_itrs
 
-    def __is_loss_function_reached_local_min(self, zero_threshold=0.0000001):
+    def __is_loss_function_reached_local_min(self, zero_threshold=0.00001):
         # A function reached local minimum if it's gradient is 0
         gradient_of_weights = self.__loss_func_gradient(self._weights)
         gradient_of_weights_norm = np.linalg.norm(gradient_of_weights)
@@ -178,21 +189,24 @@ class LogisticRegression:
         self.__threshold_for_pos_classification = threshold_for_pos_classification
 
     # ------------------- General Functions -------------------
+
     def add_intercept(self, feature_matrix):
         # Add 1 to every feature vector
         if isinstance(feature_matrix, np.ndarray):
             intercept_column = np.ones((feature_matrix.shape[0], 1))
-            feature_matrix = np.concatenate((feature_matrix, intercept_column), axis=1)
-            return feature_matrix  # Returning the modified feature_matrix
+            feature_matrix_with_constant = np.concatenate((feature_matrix, intercept_column), axis=1)
+            return feature_matrix_with_constant  # Returning the modified feature_matrix
         elif isinstance(feature_matrix, pd.DataFrame):
-            feature_matrix["constant"] = 1
-            return feature_matrix  # Returning the modified DataFrame
+            feature_matrix_with_constant = feature_matrix
+            feature_matrix_with_constant["constant"] = 1
+            return feature_matrix_with_constant  # Returning the modified DataFrame
 
     def plot_ROC(self, X, y):
         thresholds = np.linspace(0, 1, 100)
         true_positive_rate_lst = []
         false_positive_rate_lst = []
         j_statistic_list = []
+        original_threshold = self.__threshold_for_pos_classification
 
         for threshold in thresholds:
             self.set_threshold_for_pos_classification(threshold)
@@ -210,6 +224,7 @@ class LogisticRegression:
             false_positive_rate_lst.append(false_positive_rate)
             j_statistic_list.append(true_positive_rate - false_positive_rate)
 
+        self.set_threshold_for_pos_classification(original_threshold)
         best_threshold_index = np.argmax(j_statistic_list)
         best_threshold = thresholds[best_threshold_index]
         print("Best T:")
@@ -268,8 +283,7 @@ def convert_texts_in_file_to_bag_of_words_vectors(file_path: str) -> np.array:
     df = pd.read_csv(file_path)
     # Assuming the text data is in a column named 'text'
     texts = df['text'].tolist()
-    lemmatizer = WordNetLemmatizer()
-    tokenized_texts = [preprocess_text(text, lemmatizer) for text in texts]
+    tokenized_texts = [preprocess_text(text) for text in texts]
     all_words = [word for text in tokenized_texts for word in text]
     vocabulary = Counter(all_words)
     vocab_list = sorted(vocabulary.keys())
@@ -287,15 +301,14 @@ def convert_texts_in_file_to_bag_of_words_vectors(file_path: str) -> np.array:
 
     return bow_vectors
 
-def preprocess_text(text, lemmatizer):
+def preprocess_text(text):
+    # Convert to lowercase
     text = text.lower()
     # Remove punctuation
     text = re.sub(r'[^\w\s]', '', text)
     # Tokenize the text
-    words = word_tokenize(text)
-    # Lemmatize the words
-    lemmatized_words = [lemmatizer.lemmatize(word) for word in words]
-    return lemmatized_words
+    words = text.split()
+    return words
 
 if __name__ == '__main__':
     import statsmodels.api as sm
@@ -326,11 +339,20 @@ if __name__ == '__main__':
     # clf.fit(normalized_df_train, y)
     # clf.plot_ROC(normalized_df_test1, y)
     # print(clf.score(normalized_df_test2, y))
+    y = pd.read_csv("spam_ham_dataset.csv")["label_num"]
     bag_of_words_vectors = convert_texts_in_file_to_bag_of_words_vectors("spam_ham_dataset.csv")
     pca = PCA(n_components=5)
     principal_components = pca.fit_transform(bag_of_words_vectors)
-    principal_df = pd.DataFrame(data=principal_components)
-    print(principal_df)
+    bag_of_words_vectors_5_dimension = pd.DataFrame(data=principal_components)
+    bag_of_words_vectors_5_dimension_2222 = pd.DataFrame(data=principal_components)
+    bag_of_words_vectors_5_dimension_3333 = pd.DataFrame(data=principal_components)
+
+    model = LogisticRegression(threshold_for_pos_classification=0.8)
+    model.fit(bag_of_words_vectors_5_dimension, y)
+    model.plot_ROC(bag_of_words_vectors_5_dimension_2222, y)
+
+    print(model.score(bag_of_words_vectors_5_dimension_3333, y))
+
 
 
 
