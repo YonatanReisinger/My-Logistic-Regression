@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import re
 from collections import Counter  # Used to count the number of time a word appears in text
 from sklearn.decomposition import PCA
+from sklearn.metrics import confusion_matrix
 
 
 def sigmoid(number):
@@ -26,16 +27,14 @@ def cross_entropy_generator(X, y):
         # return np.log(1 + np.e**a).sum() / len(a)
 
     def cross_entropy_gradient(input_w: np.array):
-        # Compute the dot product <w, xi> for all xi in X
-        dot_products = np.dot(X, input_w)
-        # Compute yi * <w, xi> for all i
-        y_dot_products = y * dot_products
-        # Compute sigmoid(yi * <w, xi>) for all i
-        sigmoid_values = sigmoid(y_dot_products)
-        # Computes the product yi * xi * sigmoid(yi * <w, xi>) for each i
-        # results in a matrix where each row is a vector contributing to the gradient from each sample.
-        gradient_contributions = y[:, np.newaxis] * X * sigmoid_values[:, np.newaxis]
-        gradient = np.sum(gradient_contributions, axis=0) / X.shape[0]
+        num_of_observations = X.shape[0]
+        # Compute linear model
+        linear_model = np.dot(X, input_w)
+        # Apply sigmoid function
+        predictions = sigmoid(linear_model)
+        # Compute gradient
+        error = predictions - y
+        gradient = (1 / num_of_observations) * np.dot(X.T, error)
 
         return gradient
 
@@ -55,23 +54,10 @@ class LogisticRegression:
         # Save the data as DataFrame in order to keep the columns names if given
         self.__X_train_df = None
         self.__y_train_df = None
-        self.__num_of_observations = 0
+        self.__num_samples = 0
         self.__fit_intercept = fit_intercept
         self.__threshold_for_pos_classification = threshold_for_pos_classification
-        # 0.00001 = 0.5637, threshold = 1
-        # 0.1 = 0.6669, threshold = 1
-        # 0.1 = 0.6813, threshold = 1
-        # 0.001 = 0.695, threshold = 1
-        # 0.0001 = 0.7, threshold = 1
-
-        # 0.0001 = 0.6, threshold = 0.8
-        # 0.00001 = 0.686, threshold = 0.8
-        # 0.000001 = 0.709, threshold = 0.8, zero_threshold=0.0000001
-        # 0.0000001 = 0.71, threshold = 0.8, zero_threshold= 0.0000001
-        # 0.00000001 = 0.71, threshold = 0.8, zero_threshold= 0.0000001
-        # 0.000000001 = 0.71, threshold = 0.8, zero_threshold= 0.0000001
-        # 0.0000000001 = 0.71, threshold = 0.8, zero_threshold= 0.0000001
-        self.__gradient_descent_learning_rate = 0.00000001
+        self.__gradient_descent_learning_rate = 10
         self.__max_iter = max_iter
         self.__loss_func = None
         self.__loss_func_gradient = None
@@ -79,7 +65,7 @@ class LogisticRegression:
     def __set_fit_params(self, X, y):
         if self.__fit_intercept:
             X = self.add_intercept(X)
-        self.__num_of_observations = X.shape[0]
+        self.__num_samples = X.shape[0]
         # Save the data as numpy matrix in order to make calculations
         self.__X_train_np = np.array(X)
         self.__y_train_np = np.array(y)
@@ -91,21 +77,15 @@ class LogisticRegression:
     def fit(self, X, y):
         self.__set_fit_params(X, y)
         self._weights = np.zeros(self.__X_train_np.shape[1]) # init all the weights to 0
-
-        #for l_rate in range(100,1000, 50):
-            #self.__gradient_descent_learning_rate = l_rate
-            #self.gradient_descent()
         self.gradient_descent()
-
         self.__fit_completed = True
 
-    def gradient_descent(self, zero_threshold=0.0000001):
+    def gradient_descent(self, zero_threshold=0.00001):
         num_of_itrs = 0
         while self.__is_loss_function_reached_local_min(zero_threshold) == False and num_of_itrs < self.__max_iter:
-            self._weights = self._weights - self.__gradient_descent_learning_rate * self.__loss_func_gradient(self._weights)
+            gradient = self.__loss_func_gradient(self._weights)
+            self._weights -= self.__gradient_descent_learning_rate * gradient
             num_of_itrs += 1
-
-        num_of_itrs = num_of_itrs
 
     def __is_loss_function_reached_local_min(self, zero_threshold=0.00001):
         # A function reached local minimum if it's gradient is 0
@@ -210,8 +190,7 @@ class LogisticRegression:
 
         for threshold in thresholds:
             self.set_threshold_for_pos_classification(threshold)
-            probabilities = self.predict(X)
-            predictions = (probabilities >= threshold).astype(int)
+            predictions = np.array(self.predict(X))
             true_positive_counter = np.sum((predictions == 1) & (y == 1))
             false_positive_counter = np.sum((predictions == 1) & (y == 0))
             false_negative_counter = np.sum((predictions == 0) & (y == 1))
@@ -224,12 +203,9 @@ class LogisticRegression:
             false_positive_rate_lst.append(false_positive_rate)
             j_statistic_list.append(true_positive_rate - false_positive_rate)
 
+        # Return the original_threshold to the model
         self.set_threshold_for_pos_classification(original_threshold)
-        best_threshold_index = np.argmax(j_statistic_list)
-        best_threshold = thresholds[best_threshold_index]
-        print("Best T:")
-        print(best_threshold)
-
+        # Draw ROC/AUC curve
         plt.figure()
         plt.plot(false_positive_rate_lst, true_positive_rate_lst, color='darkorange', lw=2, label='ROC curve')
         plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
@@ -239,7 +215,24 @@ class LogisticRegression:
         plt.ylabel('True Positive Rate')
         plt.title('Receiver Operating Characteristic')
         plt.legend(loc="lower right")
+        self.__show_best_thershold_on_ROC(thresholds, j_statistic_list,
+                                        true_positive_rate_lst, false_positive_rate_lst)
+
         plt.show()
+
+    def __show_best_thershold_on_ROC(self, thresholds, j_statistic_list, tpr_lst, fpr_lst):
+        # Annotate the best threshold point with coordinates
+        best_threshold_index = np.argmax(j_statistic_list)
+        best_threshold = thresholds[best_threshold_index]
+        best_tpr = tpr_lst[best_threshold_index]
+        best_fpr = fpr_lst[best_threshold_index]
+        # Annotate the best threshold point with coordinates
+        plt.annotate(f'Threshold = {best_threshold:.2f}\n(TPR = {best_tpr:.2f}, FPR = {best_fpr:.2f})',
+                     xy=(best_fpr, best_tpr), xycoords='data',
+                     xytext=(-40, 20), textcoords='offset points',
+                     arrowprops=dict(facecolor='black', shrink=0.05, width=0.5, headwidth=5),
+                     fontsize=8,
+                     horizontalalignment='right', verticalalignment='bottom')
 
     def summary(self, X_test=None, y_test=None):
         X_test = pd.DataFrame(X_test)
@@ -255,7 +248,7 @@ class LogisticRegression:
             score = self.score(self.__X_train_df, self.__y_train_df)
 
         summary_str += f"Score:                    {score:.6f}\n"
-        summary_str += f"No. Observations for train:   {self.__num_of_observations}\n"
+        summary_str += f"No. Observations for train:   {self.__num_samples}\n"
 
         if X_test is not None and y_test is not None:
             summary_str += f"No. Observations for test:    {len(X_test)}\n"
@@ -339,19 +332,26 @@ if __name__ == '__main__':
     # clf.fit(normalized_df_train, y)
     # clf.plot_ROC(normalized_df_test1, y)
     # print(clf.score(normalized_df_test2, y))
-    y = pd.read_csv("spam_ham_dataset.csv")["label_num"]
+    scaler = StandardScaler()
+    y = np.array(pd.read_csv("spam_ham_dataset.csv")["label_num"])
+    # y = np.where(y == 0, -1, 1)
     bag_of_words_vectors = convert_texts_in_file_to_bag_of_words_vectors("spam_ham_dataset.csv")
+
     pca = PCA(n_components=5)
     principal_components = pca.fit_transform(bag_of_words_vectors)
     bag_of_words_vectors_5_dimension = pd.DataFrame(data=principal_components)
     bag_of_words_vectors_5_dimension_2222 = pd.DataFrame(data=principal_components)
     bag_of_words_vectors_5_dimension_3333 = pd.DataFrame(data=principal_components)
 
-    model = LogisticRegression(threshold_for_pos_classification=0.8)
-    model.fit(bag_of_words_vectors_5_dimension, y)
-    model.plot_ROC(bag_of_words_vectors_5_dimension_2222, y)
+    bag_of_words_vectors_5_dimension = pd.DataFrame(scaler.fit_transform(bag_of_words_vectors_5_dimension))
+    bag_of_words_vectors_5_dimension_2222 = pd.DataFrame(scaler.fit_transform(bag_of_words_vectors_5_dimension_2222))
+    bag_of_words_vectors_5_dimension_3333 = pd.DataFrame(scaler.fit_transform(bag_of_words_vectors_5_dimension_3333))
 
+    model = LogisticRegression(threshold_for_pos_classification=0.39)
+    model.fit(bag_of_words_vectors_5_dimension, y)
+    # model.plot_ROC(bag_of_words_vectors_5_dimension_2222, y)
     print(model.score(bag_of_words_vectors_5_dimension_3333, y))
+
 
 
 
