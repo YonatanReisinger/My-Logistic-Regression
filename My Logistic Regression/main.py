@@ -1,12 +1,11 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 import re
 from collections import Counter  # Used to count the number of time a word appears in text
 from sklearn.decomposition import PCA
-from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import train_test_split
 
 
 def sigmoid(number):
@@ -77,10 +76,10 @@ class LogisticRegression:
     def fit(self, X, y):
         self.__set_fit_params(X, y)
         self._weights = np.zeros(self.__X_train_np.shape[1]) # init all the weights to 0
-        self.gradient_descent()
+        self.__gradient_descent()
         self.__fit_completed = True
 
-    def gradient_descent(self, zero_threshold=0.00001):
+    def __gradient_descent(self, zero_threshold=0.00001):
         num_of_itrs = 0
         while self.__is_loss_function_reached_local_min(zero_threshold) == False and num_of_itrs < self.__max_iter:
             gradient = self.__loss_func_gradient(self._weights)
@@ -177,7 +176,7 @@ class LogisticRegression:
             feature_matrix_with_constant = np.concatenate((feature_matrix, intercept_column), axis=1)
             return feature_matrix_with_constant  # Returning the modified feature_matrix
         elif isinstance(feature_matrix, pd.DataFrame):
-            feature_matrix_with_constant = feature_matrix
+            feature_matrix_with_constant = feature_matrix.copy()
             feature_matrix_with_constant["constant"] = 1
             return feature_matrix_with_constant  # Returning the modified DataFrame
 
@@ -272,10 +271,10 @@ class LogisticRegressionMulticlass(LogisticRegression):
     pass
 
 
-def convert_texts_in_file_to_bag_of_words_vectors(file_path: str) -> np.array:
+def convert_texts_in_csv_to_bag_of_words_vectors(file_path: str, text_coulmn_name: str) -> np.array:
     df = pd.read_csv(file_path)
     # Assuming the text data is in a column named 'text'
-    texts = df['text'].tolist()
+    texts = df[text_coulmn_name].tolist()
     tokenized_texts = [preprocess_text(text) for text in texts]
     all_words = [word for text in tokenized_texts for word in text]
     vocabulary = Counter(all_words)
@@ -302,6 +301,31 @@ def preprocess_text(text):
     # Tokenize the text
     words = text.split()
     return words
+
+def main1():
+    dimension = 100
+    true_labels = np.array(pd.read_csv("spam_ham_dataset.csv")["label_num"])
+    bag_of_words_vectors = convert_texts_in_csv_to_bag_of_words_vectors(
+        "spam_ham_dataset.csv", text_coulmn_name="text")
+    # Reduce the vectors to lower dimension
+    pca = PCA(n_components=dimension)
+    principal_components = pca.fit_transform(bag_of_words_vectors)
+    bag_of_words_vectors_n_dimension = pd.DataFrame(data=principal_components)
+
+    feature_matrix_train, feature_matrix_test, true_labels_train, true_labels_test = (
+        train_test_split(bag_of_words_vectors_n_dimension, true_labels, test_size=0.2, shuffle=True))
+
+    model = LogisticRegression(threshold_for_pos_classification=0.5)
+    model.fit(feature_matrix_train, true_labels_train)
+    Question2(model, feature_matrix_test, true_labels_test)
+    Question3(model, feature_matrix_test, true_labels_test)
+
+
+def Question2(model, feature_matrix_test, true_labels_test):
+    print(model.summary(feature_matrix_test, true_labels_test))
+
+def Question3(model, feature_matrix_test, true_labels_test):
+    model.plot_ROC(feature_matrix_test, true_labels_test)
 
 if __name__ == '__main__':
     import statsmodels.api as sm
@@ -332,33 +356,4 @@ if __name__ == '__main__':
     # clf.fit(normalized_df_train, y)
     # clf.plot_ROC(normalized_df_test1, y)
     # print(clf.score(normalized_df_test2, y))
-    scaler = StandardScaler()
-    y = np.array(pd.read_csv("spam_ham_dataset.csv")["label_num"])
-    # y = np.where(y == 0, -1, 1)
-    bag_of_words_vectors = convert_texts_in_file_to_bag_of_words_vectors("spam_ham_dataset.csv")
-
-    pca = PCA(n_components=5)
-    principal_components = pca.fit_transform(bag_of_words_vectors)
-    bag_of_words_vectors_5_dimension = pd.DataFrame(data=principal_components)
-    bag_of_words_vectors_5_dimension_2222 = pd.DataFrame(data=principal_components)
-    bag_of_words_vectors_5_dimension_3333 = pd.DataFrame(data=principal_components)
-
-    bag_of_words_vectors_5_dimension = pd.DataFrame(scaler.fit_transform(bag_of_words_vectors_5_dimension))
-    bag_of_words_vectors_5_dimension_2222 = pd.DataFrame(scaler.fit_transform(bag_of_words_vectors_5_dimension_2222))
-    bag_of_words_vectors_5_dimension_3333 = pd.DataFrame(scaler.fit_transform(bag_of_words_vectors_5_dimension_3333))
-
-    model = LogisticRegression(threshold_for_pos_classification=0.39)
-    model.fit(bag_of_words_vectors_5_dimension, y)
-    # model.plot_ROC(bag_of_words_vectors_5_dimension_2222, y)
-    print(model.score(bag_of_words_vectors_5_dimension_3333, y))
-
-
-
-
-
-
-
-
-
-
-
+    main1()
