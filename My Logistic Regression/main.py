@@ -1,11 +1,12 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import re
 from collections import Counter  # Used to count the number of time a word appears in text
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
+from sklearn import datasets
+from typing import List
 
 
 def sigmoid(number):
@@ -22,8 +23,6 @@ def cross_entropy_generator(X, y):
             result += np.log(1 + np.e ** a)
         result /= num_of_observations
         return result
-        # a = -np.diag(y) @ X @ self._weights
-        # return np.log(1 + np.e**a).sum() / len(a)
 
     def cross_entropy_gradient(input_w: np.array):
         num_of_observations = X.shape[0]
@@ -42,7 +41,8 @@ def cross_entropy_generator(X, y):
 
 class LogisticRegression:
 
-    def __init__(self, fit_intercept=True, threshold_for_pos_classification=0.5, max_iter=10_000):
+    def __init__(self, fit_intercept=True, l_rate=0.1, loss_func_name="Cross Entropy",
+                 threshold_for_pos_classification=0.5, max_iter=10_000):
         self._weights = None
         self.__fit_completed = False
         self.__positive_label = 1
@@ -56,8 +56,9 @@ class LogisticRegression:
         self.__num_samples = 0
         self.__fit_intercept = fit_intercept
         self.__threshold_for_pos_classification = threshold_for_pos_classification
-        self.__gradient_descent_learning_rate = 10
+        self.__gradient_descent_learning_rate = l_rate
         self.__max_iter = max_iter
+        self.__loss_func_name = loss_func_name
         self.__loss_func = None
         self.__loss_func_gradient = None
 
@@ -71,11 +72,12 @@ class LogisticRegression:
         # Save the data as DataFrame in order to keep the columns names if given
         self.__X_train_df = pd.DataFrame(X)
         self.__y_train_df = pd.Series(y)
-        self.__loss_func, self.__loss_func_gradient = cross_entropy_generator(self.__X_train_np, self.__y_train_np)
+        if self.__loss_func_name == "Cross Entropy":
+            self.__loss_func, self.__loss_func_gradient = cross_entropy_generator(self.__X_train_np, self.__y_train_np)
 
     def fit(self, X, y):
         self.__set_fit_params(X, y)
-        self._weights = np.zeros(self.__X_train_np.shape[1]) # init all the weights to 0
+        self._weights = np.zeros(self.__X_train_np.shape[1])  # init all the weights to 0
         self.__gradient_descent()
         self.__fit_completed = True
 
@@ -105,13 +107,21 @@ class LogisticRegression:
             raise RuntimeError("Model has not been fitted yet. Please call fit() first.")
 
     def predict_label(self, feature_vector):
-        feature_vector = np.array(feature_vector)
-        z = np.inner(feature_vector, self._weights)
-        sigmoid_res = sigmoid(z)
-        if sigmoid_res >= self.__threshold_for_pos_classification:
+        pos_label_prob = self.predict_single_vector_pos_label_prob(feature_vector)
+        if pos_label_prob >= self.__threshold_for_pos_classification:
             return self.__positive_label
         else:
             return self.__negative_label
+
+    def predict_single_vector_pos_label_prob(self, feature_vector):
+        if self.__fit_completed:
+            if type(feature_vector) is not np.array:
+                feature_vector = np.array(feature_vector)
+            feature_vector = np.array(feature_vector)
+            z = np.inner(feature_vector, self._weights)
+            return sigmoid(z)
+        else:
+            raise RuntimeError("Model has not been fitted yet. Please call fit() first.")
 
     def predict_proba(self, X):
         if self.__fit_completed:
@@ -126,10 +136,7 @@ class LogisticRegression:
             raise RuntimeError("Model has not been fitted yet. Please call fit() first.")
 
     def __predict_feature_probabilities_for_each_label(self, feature_vector) -> tuple:
-        if type(feature_vector) is not np.array:
-            feature_vector = np.array(feature_vector)
-        z = np.inner(feature_vector, self._weights)
-        probability_for_positive_label = sigmoid(z)
+        probability_for_positive_label = self.predict_single_vector_pos_label_prob(feature_vector)
         probability_for_negative_label = 1 - probability_for_positive_label
         return probability_for_positive_label, probability_for_negative_label
 
@@ -169,16 +176,17 @@ class LogisticRegression:
 
     # ------------------- General Functions -------------------
 
-    def add_intercept(self, feature_matrix):
+    @staticmethod
+    def add_intercept(feature_matrix):
         # Add 1 to every feature vector
         if isinstance(feature_matrix, np.ndarray):
             intercept_column = np.ones((feature_matrix.shape[0], 1))
             feature_matrix_with_constant = np.concatenate((feature_matrix, intercept_column), axis=1)
-            return feature_matrix_with_constant  # Returning the modified feature_matrix
+            return np.array(feature_matrix_with_constant)  # Returning the modified feature_matrix
         elif isinstance(feature_matrix, pd.DataFrame):
             feature_matrix_with_constant = feature_matrix.copy()
             feature_matrix_with_constant["constant"] = 1
-            return feature_matrix_with_constant  # Returning the modified DataFrame
+            return pd.DataFrame(feature_matrix_with_constant) # Returning the modified DataFrame
 
     def plot_ROC(self, X, y):
         thresholds = np.linspace(0, 1, 100)
@@ -239,7 +247,7 @@ class LogisticRegression:
 
         summary_str = "==============================================================================\n"
         summary_str += f"Dep. Variable:                {self.__y_train_df.name}\n"
-        summary_str += "Loss Function:                Cross Entropy\n"
+        summary_str += f"Loss Function:                {self.__loss_func_name}\n"
 
         if X_test is not None and y_test is not None:
             score = self.score(X_test, y_test)
@@ -267,9 +275,96 @@ class LogisticRegression:
 
         return summary_str
 
-class LogisticRegressionMulticlass(LogisticRegression):
-    pass
+class LogisticRegressionMulticlass():
 
+    def __init__(self, num_of_classes, fit_intercept=True, loss_func_name="Cross Entropy"):
+        self.__num_of_classes = num_of_classes
+        self.__classifiers: List[LogisticRegression] = []
+        self.__fit_completed = False
+        self.__fit_intercept = fit_intercept
+        self.__X_train_np = None
+        self.__y_train_np = None
+        self.__X_train_df = None
+        self.__y_train_df = None
+        self.__num_samples = 0
+        self.__loss_func_name = loss_func_name
+
+    def fit(self, X, y):
+        self.__set_fit_params(X, y)
+
+        y_lists = [np.where(self.__y_train_np == i, 1, 0) for i in range(self.__num_of_classes)]
+        self.__classifiers = [LogisticRegression(fit_intercept=self.__fit_intercept, loss_func_name=self.__loss_func_name)
+                              for _ in range(self.__num_of_classes)]
+        for i in range(self.__num_of_classes):
+            self.__classifiers[i].fit(X, y_lists[i])
+
+        self.__fit_completed = True
+
+    def __set_fit_params(self, X, y):
+        transformed_y = self.__transform_to_class_number(y)
+        self.__X_train_np = np.array(X)
+        self.__y_train_np = np.array(transformed_y)
+        self.__X_train_df = pd.DataFrame(X)
+        self.__y_train_df = pd.Series(y)
+        self.__num_samples = X.shape[0]
+
+    def __transform_to_class_number(self, y):
+        unique_values = sorted(set(y))
+        # Create a mapping from value to class number (0 to n-1)
+        value_to_class_number = {value: class_number for class_number, value in enumerate(unique_values)}
+        transformed_y = [value_to_class_number[value] for value in y]
+
+        return transformed_y
+
+    def predict(self, X):
+        if self.__fit_completed:
+            feature_matrix = np.array(X)
+            predictions = []
+            num_samples = X.shape[0]
+
+            if self.__fit_intercept:
+                feature_matrix = np.array(LogisticRegression.add_intercept(X))
+
+            for i in range(num_samples):
+                probas_for_each_class = [self.__classifiers[j].predict_single_vector_pos_label_prob(feature_matrix[i])
+                                         for j in range(self.__num_of_classes)]
+                # Predict the vector as the label that got the highest probability
+                predictions.append(probas_for_each_class.index(max(probas_for_each_class)))
+
+            return predictions
+        else:
+            raise RuntimeError("Model has not been fitted yet. Please call fit() first.")
+
+    def score(self, X, y):
+        if self.__fit_completed:
+            predictions = np.array(self.predict(X))
+            true_labels = np.array(y)
+            num_of_correct_classifications = np.sum(predictions == true_labels)
+            return num_of_correct_classifications / len(y)
+
+        else:
+            raise RuntimeError("Model has not been fitted yet. Please call fit() first.")
+
+    def summary(self, X_test=None, y_test=None):
+        summary_str = "==============================================================================\n"
+        summary_str += f"Dep. Variable:                {self.__y_train_df.name}\n"
+        summary_str += f"Number Of Classes:            {self.__num_of_classes}\n"
+        summary_str += f"Loss Function:                {self.__loss_func_name}\n"
+
+        if X_test is not None and y_test is not None:
+            score = self.score(X_test, y_test)
+        else:
+            score = self.score(self.__X_train_np, self.__y_train_np)
+
+        summary_str += f"Score:                    {score:.6f}\n"
+        summary_str += f"No. Observations for train:   {self.__num_samples}\n"
+
+        if X_test is not None and y_test is not None:
+            summary_str += f"No. Observations for test:    {len(X_test)}\n"
+
+        summary_str += "==============================================================================\n"
+
+        return summary_str
 
 def convert_texts_in_csv_to_bag_of_words_vectors(file_path: str, text_coulmn_name: str) -> np.array:
     df = pd.read_csv(file_path)
@@ -315,7 +410,7 @@ def main1():
     feature_matrix_train, feature_matrix_test, true_labels_train, true_labels_test = (
         train_test_split(bag_of_words_vectors_n_dimension, true_labels, test_size=0.2, shuffle=True))
 
-    model = LogisticRegression(threshold_for_pos_classification=0.5)
+    model = LogisticRegression(l_rate=10, threshold_for_pos_classification=0.5)
     model.fit(feature_matrix_train, true_labels_train)
     Question2(model, feature_matrix_test, true_labels_test)
     Question3(model, feature_matrix_test, true_labels_test)
@@ -324,36 +419,22 @@ def main1():
 def Question2(model, feature_matrix_test, true_labels_test):
     print(model.summary(feature_matrix_test, true_labels_test))
 
+
 def Question3(model, feature_matrix_test, true_labels_test):
     model.plot_ROC(feature_matrix_test, true_labels_test)
 
+
+def main2():
+    feature_matrix, true_labels = datasets.load_iris(return_X_y=True, as_frame=True)
+    feature_matrix_train, feature_matrix_test, true_labels_train, true_labels_test = (
+        train_test_split(feature_matrix, true_labels, test_size=0.2, shuffle=True))
+
+    multi_model = LogisticRegressionMulticlass(len(set(true_labels)))
+    multi_model.fit(feature_matrix_train, true_labels_train)
+    print(multi_model.summary(feature_matrix_test, true_labels_test))
+
+
 if __name__ == '__main__':
-    import statsmodels.api as sm
-    #df = pd.read_csv("students-loan-data.csv")
-    #scaler = StandardScaler()
-    # Fit and transform the data
-    #normalized_df = pd.DataFrame(scaler.fit_transform(df), columns=df.columns)
-    #X = normalized_df[["balance", "income", "student"]]
-    #y = df["valid"]
+    #main1()
+    main2()
 
-    #model = LogisticRegression()
-    #model.fit(X, y)
-    #X2 = normalized_df[["balance", "income", "student"]]
-    #print(model.score(X2, y))
-
-    from sklearn.datasets import load_breast_cancer
-    #from sklearn.linear_model import LogisticRegression
-
-    #data = load_breast_cancer()
-
-    # X = data['data']
-    # y = data['target']
-    # scaler = StandardScaler()
-    # normalized_df_train = pd.DataFrame(scaler.fit_transform(X))
-    # normalized_df_test1 = pd.DataFrame(scaler.fit_transform(X))
-    # normalized_df_test2 = pd.DataFrame(scaler.fit_transform(X))
-    # clf = LogisticRegression(threshold_for_pos_classification=0.3)
-    # clf.fit(normalized_df_train, y)
-    # clf.plot_ROC(normalized_df_test1, y)
-    # print(clf.score(normalized_df_test2, y))
-    main1()
