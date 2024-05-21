@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import re
+import re # Used to remove punctuations from the words
 from collections import Counter  # Used to count the number of time a word appears in text
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
@@ -36,6 +36,7 @@ class LogisticRegression:
                  threshold_for_pos_classification=0.5, max_iter=10_000):
         self._weights = None
         self.__fit_completed = False
+        # The model expect that the true labels will be 1 and -1
         self.__positive_label = 1
         self.__negative_label = -1
         # Save the data as numpy matrix in order to make calculations
@@ -54,11 +55,17 @@ class LogisticRegression:
         self.__loss_func_gradient = None
 
     def __set_fit_params(self, X, y):
-        if len(y) != 2:
+        unique_labels = np.unique(y)
+
+        if len(unique_labels) != 2:
             raise RuntimeError("Model is binary. can train just on classifications with just 2 classes")
 
         if self.__fit_intercept:
             X = self.add_intercept(X)
+
+        self.__original_labels = unique_labels
+        # The model expect that the true labels will be 1 and -1
+        y = np.where(y == unique_labels[0], self.__negative_label, self.__positive_label)
         self.__num_samples = X.shape[0]
         # Save the data as numpy matrix in order to make calculations
         self.__X_train_np = np.array(X)
@@ -103,9 +110,9 @@ class LogisticRegression:
     def predict_label(self, feature_vector):
         pos_label_prob = self.predict_single_vector_pos_label_prob(feature_vector)
         if pos_label_prob >= self.__threshold_for_pos_classification:
-            return self.__positive_label
+            return self.__original_labels[1]
         else:
-            return self.__negative_label
+            return self.__original_labels[0]
 
     def predict_single_vector_pos_label_prob(self, feature_vector):
         if self.__fit_completed:
@@ -188,8 +195,8 @@ class LogisticRegression:
         false_positive_rate_lst = []
         j_statistic_list = []
         original_threshold = self.__threshold_for_pos_classification
-        pos_label = self.__positive_label
-        neg_label = self.__negative_label
+        pos_label = self.__original_labels[1]
+        neg_label = self.__original_labels[0]
 
         for threshold in thresholds:
             self.set_threshold_for_pos_classification(threshold)
@@ -400,7 +407,7 @@ def preprocess_text(text):
 def main1():
     dimension = 100
     true_labels = np.array(pd.read_csv("spam_ham_dataset.csv")["label_num"])
-    true_labels = np.where(true_labels == 0, -1, 1)
+    # true_labels = np.where(true_labels == 0, -1, 1)
     bag_of_words_vectors = convert_texts_in_csv_to_bag_of_words_vectors(
         "spam_ham_dataset.csv", text_coulmn_name="text")
     # Reduce the vectors to lower dimension
@@ -423,6 +430,9 @@ def Question2(model, feature_matrix_test, true_labels_test):
 
 def Question3(model, feature_matrix_test, true_labels_test):
     model.plot_ROC(feature_matrix_test, true_labels_test)
+    print("The best Threshold that can be used is the one that gets as much True positives "
+          "and as less False positive"
+          ", thus the threshold point on the most left upper side of the ROC curve")
 
 
 def main2():
@@ -436,6 +446,6 @@ def main2():
 
 
 if __name__ == '__main__':
-    #main1()
-    main2()
+    main1()
+    #main2()
 
