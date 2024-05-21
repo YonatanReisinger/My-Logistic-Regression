@@ -6,7 +6,6 @@ from collections import Counter  # Used to count the number of time a word appea
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn import datasets
-from typing import List
 
 
 def sigmoid(number):
@@ -25,16 +24,8 @@ def cross_entropy_generator(X, y):
         return result
 
     def cross_entropy_gradient(input_w: np.array):
-        num_of_observations = X.shape[0]
-        # Compute linear model
-        linear_model = np.dot(X, input_w)
-        # Apply sigmoid function
-        predictions = sigmoid(linear_model)
-        # Compute gradient
-        error = predictions - y
-        gradient = (1 / num_of_observations) * np.dot(X.T, error)
-
-        return gradient
+        a = -y * sigmoid(-y*(X@input_w))
+        return np.dot(a, X)
 
     return cross_entropy, cross_entropy_gradient
 
@@ -46,7 +37,7 @@ class LogisticRegression:
         self._weights = None
         self.__fit_completed = False
         self.__positive_label = 1
-        self.__negative_label = 0
+        self.__negative_label = -1
         # Save the data as numpy matrix in order to make calculations
         self.__X_train_np = None
         self.__y_train_np = None
@@ -63,6 +54,9 @@ class LogisticRegression:
         self.__loss_func_gradient = None
 
     def __set_fit_params(self, X, y):
+        if len(y) != 2:
+            raise RuntimeError("Model is binary. can train just on classifications with just 2 classes")
+
         if self.__fit_intercept:
             X = self.add_intercept(X)
         self.__num_samples = X.shape[0]
@@ -194,14 +188,16 @@ class LogisticRegression:
         false_positive_rate_lst = []
         j_statistic_list = []
         original_threshold = self.__threshold_for_pos_classification
+        pos_label = self.__positive_label
+        neg_label = self.__negative_label
 
         for threshold in thresholds:
             self.set_threshold_for_pos_classification(threshold)
             predictions = np.array(self.predict(X))
-            true_positive_counter = np.sum((predictions == 1) & (y == 1))
-            false_positive_counter = np.sum((predictions == 1) & (y == 0))
-            false_negative_counter = np.sum((predictions == 0) & (y == 1))
-            true_negative_counter = np.sum((predictions == 0) & (y == 0))
+            true_positive_counter = np.sum((predictions == pos_label) & (y == pos_label))
+            false_positive_counter = np.sum((predictions == pos_label) & (y == neg_label))
+            false_negative_counter = np.sum((predictions == neg_label) & (y == pos_label))
+            true_negative_counter = np.sum((predictions == neg_label) & (y == neg_label))
 
             true_positive_rate = true_positive_counter / (true_positive_counter + false_negative_counter)
             false_positive_rate = false_positive_counter / (false_positive_counter + true_negative_counter)
@@ -275,11 +271,13 @@ class LogisticRegression:
 
         return summary_str
 
-class LogisticRegressionMulticlass():
 
-    def __init__(self, num_of_classes, fit_intercept=True, loss_func_name="Cross Entropy"):
+class LogisticRegressionMulticlass:
+
+    def __init__(self, num_of_classes, l_rate=0.1, fit_intercept=True, loss_func_name="Cross Entropy"):
         self.__num_of_classes = num_of_classes
-        self.__classifiers: List[LogisticRegression] = []
+        self.__learning_rate = l_rate
+        self.__classifiers = []
         self.__fit_completed = False
         self.__fit_intercept = fit_intercept
         self.__X_train_np = None
@@ -292,8 +290,10 @@ class LogisticRegressionMulticlass():
     def fit(self, X, y):
         self.__set_fit_params(X, y)
 
-        y_lists = [np.where(self.__y_train_np == i, 1, 0) for i in range(self.__num_of_classes)]
-        self.__classifiers = [LogisticRegression(fit_intercept=self.__fit_intercept, loss_func_name=self.__loss_func_name)
+        y_lists = [np.where(self.__y_train_np == i, 1, -1) for i in range(self.__num_of_classes)]
+        self.__classifiers = [LogisticRegression(fit_intercept=self.__fit_intercept
+                                                 , loss_func_name=self.__loss_func_name
+                                                 , l_rate=self.__learning_rate)
                               for _ in range(self.__num_of_classes)]
         for i in range(self.__num_of_classes):
             self.__classifiers[i].fit(X, y_lists[i])
@@ -372,16 +372,16 @@ def convert_texts_in_csv_to_bag_of_words_vectors(file_path: str, text_coulmn_nam
     texts = df[text_coulmn_name].tolist()
     tokenized_texts = [preprocess_text(text) for text in texts]
     all_words = [word for text in tokenized_texts for word in text]
-    vocabulary = Counter(all_words)
-    vocab_list = sorted(vocabulary.keys())
+    all_unique_words = list(set(all_words))
 
     # Create a mapping from word to index
-    word_to_index = {word: i for i, word in enumerate(vocab_list)}
+    word_to_index = {word: i for i, word in enumerate(all_unique_words)}
     # Create Bag of Words representation for all texts in the file
-    bow_vectors = np.zeros((len(tokenized_texts), len(vocab_list)), dtype=int)
+    bow_vectors = np.zeros((len(tokenized_texts), len(all_unique_words)), dtype=int)
 
     for i, text in enumerate(tokenized_texts):
         word_counts = Counter(text)
+        # Each index, the BOW vector will have the amount of times that words appeared in it's text.
         for word, count in word_counts.items():
             if word in word_to_index:
                 bow_vectors[i, word_to_index[word]] = count
@@ -400,6 +400,7 @@ def preprocess_text(text):
 def main1():
     dimension = 100
     true_labels = np.array(pd.read_csv("spam_ham_dataset.csv")["label_num"])
+    true_labels = np.where(true_labels == 0, -1, 1)
     bag_of_words_vectors = convert_texts_in_csv_to_bag_of_words_vectors(
         "spam_ham_dataset.csv", text_coulmn_name="text")
     # Reduce the vectors to lower dimension
@@ -410,7 +411,7 @@ def main1():
     feature_matrix_train, feature_matrix_test, true_labels_train, true_labels_test = (
         train_test_split(bag_of_words_vectors_n_dimension, true_labels, test_size=0.2, shuffle=True))
 
-    model = LogisticRegression(l_rate=10, threshold_for_pos_classification=0.5)
+    model = LogisticRegression(l_rate=0.0001, threshold_for_pos_classification=0.3)
     model.fit(feature_matrix_train, true_labels_train)
     Question2(model, feature_matrix_test, true_labels_test)
     Question3(model, feature_matrix_test, true_labels_test)
@@ -429,7 +430,7 @@ def main2():
     feature_matrix_train, feature_matrix_test, true_labels_train, true_labels_test = (
         train_test_split(feature_matrix, true_labels, test_size=0.2, shuffle=True))
 
-    multi_model = LogisticRegressionMulticlass(len(set(true_labels)))
+    multi_model = LogisticRegressionMulticlass(len(set(true_labels)), l_rate=0.001)
     multi_model.fit(feature_matrix_train, true_labels_train)
     print(multi_model.summary(feature_matrix_test, true_labels_test))
 
